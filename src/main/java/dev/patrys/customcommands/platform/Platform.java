@@ -1,9 +1,11 @@
 package dev.patrys.customcommands.platform;
 
 import dev.patrys.customcommands.CommandExecutor;
+import dev.patrys.customcommands.TabCompleter;
 
 public interface Platform {
-    void registerCommand(String name, CommandExecutor executor);
+    // Tutaj dodaliśmy trzeci argument: TabCompleter completer
+    void registerCommand(String name, CommandExecutor executor, TabCompleter completer);
     void scheduleAsync(Runnable task);
     void scheduleSync(Runnable task);
 }

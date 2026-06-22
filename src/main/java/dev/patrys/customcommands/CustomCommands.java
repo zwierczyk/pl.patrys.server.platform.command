@@ -1,6 +1,9 @@
 package dev.patrys.customcommands;
 
 import dev.patrys.customcommands.argument.ArgumentResolver;
+import dev.patrys.customcommands.handler.CooldownHandler;
+import dev.patrys.customcommands.handler.PermissionHandler;
+import dev.patrys.customcommands.handler.UsageHandler;
 import dev.patrys.customcommands.platform.Platform;
 
 public class CustomCommands {
@@ -25,6 +28,21 @@ public class CustomCommands {
 
     public <T> CustomCommands registerArgumentResolver(ArgumentResolver<T> resolver) {
         registry.getResolverRegistry().register(resolver);
+        return this;
+    }
+
+    public CustomCommands permissionHandler(PermissionHandler handler) {
+        registry.getHandlerRegistry().setPermissionHandler(handler);
+        return this;
+    }
+
+    public CustomCommands usageHandler(UsageHandler handler) {
+        registry.getHandlerRegistry().setUsageHandler(handler);
+        return this;
+    }
+
+    public CustomCommands cooldownHandler(CooldownHandler handler) {
+        registry.getHandlerRegistry().setCooldownHandler(handler);
         return this;
     }
 

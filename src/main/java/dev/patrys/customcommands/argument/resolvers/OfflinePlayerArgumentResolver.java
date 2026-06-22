@@ -4,19 +4,23 @@ import dev.patrys.customcommands.argument.ArgumentResolver;
 import dev.patrys.customcommands.exception.PlayerNotFoundException;
 import dev.patrys.customcommands.platform.PlatformSender;
 import org.bukkit.Bukkit;
+import org.bukkit.OfflinePlayer;
 import org.bukkit.entity.Player;
 
 import java.util.List;
 import java.util.stream.Collectors;
 
-public class PlayerArgumentResolver implements ArgumentResolver<Player> {
+public class OfflinePlayerArgumentResolver implements ArgumentResolver<OfflinePlayer> {
 
     @Override
-    public Player resolve(PlatformSender sender, String argument) {
-        Player player = Bukkit.getPlayer(argument);
-        if (player == null) {
+    @SuppressWarnings("deprecation")
+    public OfflinePlayer resolve(PlatformSender sender, String argument) {
+        OfflinePlayer player = Bukkit.getOfflinePlayer(argument);
+
+        if (!player.hasPlayedBefore() && !player.isOnline()) {
             throw new PlayerNotFoundException(argument);
         }
+
         return player;
     }
 
@@ -29,7 +33,7 @@ public class PlayerArgumentResolver implements ArgumentResolver<Player> {
     }
 
     @Override
-    public Class<Player> getType() {
-        return Player.class;
+    public Class<OfflinePlayer> getType() {
+        return OfflinePlayer.class;
     }
 }

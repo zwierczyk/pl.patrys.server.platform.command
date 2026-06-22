@@ -17,6 +17,7 @@ public class ArgumentResolverRegistry {
         register(new IntegerArgumentResolver());
         register(new DoubleArgumentResolver());
         register(new PlayerArgumentResolver());
+        register(new OfflinePlayerArgumentResolver());
     }
 
     public <T> void register(ArgumentResolver<T> resolver) {

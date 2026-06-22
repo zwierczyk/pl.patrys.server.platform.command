@@ -1,7 +1,11 @@
 package dev.patrys.customcommands;
 
 import dev.patrys.customcommands.annotation.*;
+import dev.patrys.customcommands.argument.ArgumentResolver;
 import dev.patrys.customcommands.argument.ArgumentResolverRegistry;
+import dev.patrys.customcommands.exception.InvalidUsageException;
+import dev.patrys.customcommands.exception.PlayerNotFoundException;
+import dev.patrys.customcommands.handler.HandlerRegistry;
 import dev.patrys.customcommands.platform.Platform;
 import dev.patrys.customcommands.platform.PlatformSender;
 
@@ -13,12 +17,14 @@ import java.util.concurrent.ConcurrentHashMap;
 public class CommandRegistry {
     private final Platform platform;
     private final ArgumentResolverRegistry resolverRegistry;
+    private final HandlerRegistry handlerRegistry;
     private final Map<String, List<CommandData>> commands = new HashMap<>();
     private final Map<String, Map<String, Long>> cooldowns = new ConcurrentHashMap<>();
 
     public CommandRegistry(Platform platform) {
         this.platform = platform;
         this.resolverRegistry = new ArgumentResolverRegistry();
+        this.handlerRegistry = new HandlerRegistry();
     }
 
     public void register(Object commandInstance) {
@@ -52,15 +58,77 @@ public class CommandRegistry {
             }
         }
 
-        platform.registerCommand(command.name(), (sender, args) -> {
-            executeCommand(sender, command.name(), args);
-        });
+        platform.registerCommand(
+                command.name(),
+                (PlatformSender sender, String[] args) -> executeCommand(sender, command.name(), args),
+                (PlatformSender sender, String[] args) -> getSuggestions(sender, command.name(), args)
+        );
 
         for (String alias : command.aliases()) {
-            platform.registerCommand(alias, (sender, args) -> {
-                executeCommand(sender, alias, args);
-            });
+            platform.registerCommand(
+                    alias,
+                    (PlatformSender sender, String[] args) -> executeCommand(sender, alias, args),
+                    (PlatformSender sender, String[] args) -> getSuggestions(sender, alias, args)
+            );
         }
+    }
+
+    private List<String> getSuggestions(PlatformSender sender, String commandName, String[] args) {
+        List<CommandData> commandDataList = commands.get(commandName);
+        if (commandDataList == null || args.length == 0) return Collections.emptyList();
+
+        Set<String> suggestions = new HashSet<>();
+        String currentInput = args[args.length - 1];
+
+        for (CommandData data : commandDataList) {
+            if (!hasPermission(sender, data)) continue;
+
+            String[] routeParts = data.route.isEmpty() ? new String[0] : data.route.split(" ");
+            boolean matchesSoFar = true;
+
+            for (int i = 0; i < args.length - 1; i++) {
+                if (i < routeParts.length) {
+                    if (!routeParts[i].equalsIgnoreCase(args[i])) {
+                        matchesSoFar = false;
+                        break;
+                    }
+                }
+            }
+
+            if (!matchesSoFar) continue;
+
+            int currentIndex = args.length - 1;
+
+            if (currentIndex < routeParts.length) {
+                String expectedRoutePart = routeParts[currentIndex];
+                if (expectedRoutePart.toLowerCase().startsWith(currentInput.toLowerCase())) {
+                    suggestions.add(expectedRoutePart);
+                }
+            } else {
+                int argIndex = currentIndex - routeParts.length;
+                Parameter[] parameters = data.method.getParameters();
+
+                int actualArgCount = 0;
+                for (Parameter param : parameters) {
+                    if (param.isAnnotationPresent(Arg.class)) {
+                        boolean isJoin = param.isAnnotationPresent(Join.class);
+
+                        if (actualArgCount == argIndex || (isJoin && argIndex >= actualArgCount)) {
+                            ArgumentResolver<?> resolver = resolverRegistry.getResolver(param.getType());
+                            if (resolver != null) {
+                                suggestions.addAll(resolver.suggest(sender, currentInput));
+                            }
+                            break;
+                        }
+                        actualArgCount++;
+                    }
+                }
+            }
+        }
+
+        List<String> sorted = new ArrayList<>(suggestions);
+        Collections.sort(sorted);
+        return sorted;
     }
 
     private void executeCommand(PlatformSender sender, String commandName, String[] args) {
@@ -74,25 +142,31 @@ public class CommandRegistry {
         CommandData matchedCommand = findMatchingCommand(commandDataList, args);
 
         if (matchedCommand == null) {
-            sender.sendMessage("§cNieprawidłowe użycie komendy!");
+            sendUsage(sender, commandName, commandDataList);
             return;
         }
 
-        if (!checkPermission(sender, matchedCommand)) {
-            return;
-        }
-
-        if (!checkCooldown(sender, matchedCommand)) {
-            return;
-        }
+        if (!checkPermissionAndNotify(sender, matchedCommand)) return;
+        if (!checkCooldown(sender, matchedCommand)) return;
 
         Runnable task = () -> {
             try {
                 Object[] methodArgs = resolveArguments(sender, matchedCommand, args);
                 matchedCommand.method.invoke(matchedCommand.instance, methodArgs);
+            } catch (InvalidUsageException e) {
+                sendUsage(sender, commandName, Collections.singletonList(matchedCommand));
             } catch (Exception e) {
-                sender.sendMessage("§cWystąpił błąd: " + e.getMessage());
-                e.printStackTrace();
+                Throwable cause = e.getCause();
+                if (cause instanceof InvalidUsageException) {
+                    sendUsage(sender, commandName, Collections.singletonList(matchedCommand));
+                } else if (cause instanceof PlayerNotFoundException) {
+                    handlerRegistry.getPlayerNotFoundHandler().handle(sender, ((PlayerNotFoundException) cause).getTargetName());
+                } else if (cause instanceof IllegalArgumentException) {
+                    sender.sendMessage(cause.getMessage());
+                } else {
+                    sender.sendMessage("§cWystąpił błąd podczas wykonywania komendy!");
+                    e.printStackTrace();
+                }
             }
         };
 
@@ -114,48 +188,41 @@ public class CommandRegistry {
     }
 
     private boolean matchesRoute(String route, String[] args) {
-        if (route.isEmpty()) {
-            return true;
-        }
+        if (route.isEmpty()) return true;
 
         String[] routeParts = route.split(" ");
-        if (args.length < routeParts.length) {
-            return false;
-        }
+        if (args.length < routeParts.length) return false;
 
         for (int i = 0; i < routeParts.length; i++) {
-            if (!routeParts[i].equals(args[i])) {
-                return false;
-            }
+            if (!routeParts[i].equalsIgnoreCase(args[i])) return false;
         }
 
         return true;
     }
 
-    private boolean checkPermission(PlatformSender sender, CommandData data) {
+    private boolean hasPermission(PlatformSender sender, CommandData data) {
         Permission permission = data.method.getAnnotation(Permission.class);
-
         if (permission == null && data.basePermission != null) {
-            if (!sender.hasPermission(data.basePermission)) {
-                sender.sendMessage("§cNie masz uprawnień!");
-                return false;
-            }
+            return sender.hasPermission(data.basePermission);
         } else if (permission != null) {
-            if (!sender.hasPermission(permission.value())) {
-                sender.sendMessage(permission.message());
-                return false;
-            }
+            return sender.hasPermission(permission.value());
         }
+        return true;
+    }
 
+    private boolean checkPermissionAndNotify(PlatformSender sender, CommandData data) {
+        if (!hasPermission(sender, data)) {
+            Permission permission = data.method.getAnnotation(Permission.class);
+            String permString = permission != null ? permission.value() : (data.basePermission != null ? data.basePermission : "Brak informacji");
+            handlerRegistry.getPermissionHandler().handle(sender, permString);
+            return false;
+        }
         return true;
     }
 
     private boolean checkCooldown(PlatformSender sender, CommandData data) {
         Cooldown cooldown = data.method.getAnnotation(Cooldown.class);
-
-        if (cooldown == null) {
-            return true;
-        }
+        if (cooldown == null) return true;
 
         String key = data.method.toString();
         Map<String, Long> userCooldowns = cooldowns.computeIfAbsent(sender.getName(), k -> new ConcurrentHashMap<>());
@@ -166,8 +233,7 @@ public class CommandRegistry {
 
         if (lastUsed != null && currentTime - lastUsed < cooldownMillis) {
             long remaining = (cooldownMillis - (currentTime - lastUsed)) / 1000;
-            String message = cooldown.message().replace("{time}", String.valueOf(remaining));
-            sender.sendMessage(message);
+            handlerRegistry.getCooldownHandler().handle(sender, remaining);
             return false;
         }
 
@@ -198,30 +264,98 @@ public class CommandRegistry {
 
             if (param.isAnnotationPresent(Arg.class)) {
                 Arg arg = param.getAnnotation(Arg.class);
+                boolean isJoin = param.isAnnotationPresent(Join.class);
 
                 if (argIndex >= args.length) {
                     if (arg.required()) {
-                        throw new IllegalArgumentException("§cBrak wymaganego argumentu: " + arg.value());
+                        throw new InvalidUsageException();
                     }
                     resolvedArgs[i] = null;
                     continue;
                 }
 
-                var resolver = resolverRegistry.getResolver(type);
+                String argumentToResolve;
+                if (isJoin) {
+                    StringBuilder sb = new StringBuilder();
+                    for (int j = argIndex; j < args.length; j++) {
+                        if (j > argIndex) sb.append(" ");
+                        sb.append(args[j]);
+                    }
+                    argumentToResolve = sb.toString();
+                    argIndex = args.length;
+                } else {
+                    argumentToResolve = args[argIndex];
+                    argIndex++;
+                }
+
+                ArgumentResolver<?> resolver = resolverRegistry.getResolver(type);
                 if (resolver == null) {
                     throw new IllegalStateException("Brak resolvera dla typu: " + type.getName());
                 }
 
-                resolvedArgs[i] = resolver.resolve(sender, args[argIndex]);
-                argIndex++;
+                resolvedArgs[i] = resolver.resolve(sender, argumentToResolve);
             }
         }
 
         return resolvedArgs;
     }
 
+    private void sendUsage(PlatformSender sender, String commandName, List<CommandData> commands) {
+        List<CommandData> allowedCommands = new ArrayList<>();
+        for (CommandData cmd : commands) {
+            if (hasPermission(sender, cmd)) {
+                allowedCommands.add(cmd);
+            }
+        }
+
+        if (allowedCommands.isEmpty()) {
+            handlerRegistry.getPermissionHandler().handle(sender, "Nieznane uprawnienie");
+            return;
+        }
+
+        StringBuilder sb = new StringBuilder();
+        if (allowedCommands.size() == 1) {
+            sb.append("§7/").append(commandName).append(" ").append(buildCommandUsage(allowedCommands.get(0)));
+        } else {
+            for (CommandData cmd : allowedCommands) {
+                sb.append("§8- §7/").append(commandName).append(" ").append(buildCommandUsage(cmd)).append("\n");
+            }
+        }
+
+        handlerRegistry.getUsageHandler().handle(sender, sb.toString().trim());
+    }
+
+    private String buildCommandUsage(CommandData data) {
+        StringBuilder sb = new StringBuilder();
+
+        if (!data.route.isEmpty()) {
+            sb.append(data.route).append(" ");
+        }
+
+        for (Parameter param : data.method.getParameters()) {
+            if (param.isAnnotationPresent(Arg.class)) {
+                Arg arg = param.getAnnotation(Arg.class);
+                boolean isJoin = param.isAnnotationPresent(Join.class);
+
+                String argName = arg.value() + (isJoin ? "..." : "");
+
+                if (arg.required()) {
+                    sb.append("<").append(argName).append("> ");
+                } else {
+                    sb.append("[").append(argName).append("] ");
+                }
+            }
+        }
+
+        return sb.toString().trim();
+    }
+
     public ArgumentResolverRegistry getResolverRegistry() {
         return resolverRegistry;
+    }
+
+    public HandlerRegistry getHandlerRegistry() {
+        return handlerRegistry;
     }
 
     private static class CommandData {
