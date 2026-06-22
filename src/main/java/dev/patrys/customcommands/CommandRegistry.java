@@ -155,7 +155,12 @@ public class CommandRegistry {
                 matchedCommand.method.invoke(matchedCommand.instance, methodArgs);
             } catch (InvalidUsageException e) {
                 sendUsage(sender, commandName, Collections.singletonList(matchedCommand));
+            } catch (PlayerNotFoundException e) {
+                handlerRegistry.getPlayerNotFoundHandler().handle(sender, e.getTargetName());
+            } catch (IllegalArgumentException e) {
+                sender.sendMessage(e.getMessage());
             } catch (Exception e) {
+                // Jeśli błąd pochodzi ze środka metody komendy
                 Throwable cause = e.getCause();
                 if (cause instanceof InvalidUsageException) {
                     sendUsage(sender, commandName, Collections.singletonList(matchedCommand));
@@ -178,13 +183,22 @@ public class CommandRegistry {
     }
 
     private CommandData findMatchingCommand(List<CommandData> commands, String[] args) {
-        return commands.stream()
-                .filter(cmd -> matchesRoute(cmd.route, args))
-                .max(Comparator.comparingInt(cmd -> cmd.route.split(" ").length))
-                .orElse(commands.stream()
-                        .filter(cmd -> cmd.route.isEmpty())
-                        .findFirst()
-                        .orElse(null));
+        CommandData bestMatch = null;
+        int bestRouteLength = -1;
+
+        for (CommandData cmd : commands) {
+            int routeLen = cmd.route.isEmpty() ? 0 : cmd.route.split(" ").length;
+
+            if (matchesRoute(cmd.route, args)) {
+                // Szukamy komendy z najdłuższą dopasowaną ścieżką
+                if (routeLen > bestRouteLength) {
+                    bestMatch = cmd;
+                    bestRouteLength = routeLen;
+                }
+            }
+        }
+
+        return bestMatch;
     }
 
     private boolean matchesRoute(String route, String[] args) {
@@ -247,6 +261,23 @@ public class CommandRegistry {
 
         int routeLength = data.route.isEmpty() ? 0 : data.route.split(" ").length;
         int argIndex = routeLength;
+
+        // Zliczanie oczekiwanych argumentów i sprawdzanie adnotacji Join
+        int expectedArgs = routeLength;
+        boolean hasJoin = false;
+        for (Parameter p : parameters) {
+            if (p.isAnnotationPresent(Arg.class)) {
+                expectedArgs++;
+                if (p.isAnnotationPresent(Join.class)) {
+                    hasJoin = true;
+                }
+            }
+        }
+
+        // Jeśli gracz wpisał za dużo argumentów, rzucamy błąd (chyba że jest Join)
+        if (args.length > expectedArgs && !hasJoin) {
+            throw new InvalidUsageException();
+        }
 
         for (int i = 0; i < parameters.length; i++) {
             Parameter param = parameters[i];

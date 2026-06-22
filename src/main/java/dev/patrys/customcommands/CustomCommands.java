@@ -3,6 +3,7 @@ package dev.patrys.customcommands;
 import dev.patrys.customcommands.argument.ArgumentResolver;
 import dev.patrys.customcommands.handler.CooldownHandler;
 import dev.patrys.customcommands.handler.PermissionHandler;
+import dev.patrys.customcommands.handler.PlayerNotFoundHandler;
 import dev.patrys.customcommands.handler.UsageHandler;
 import dev.patrys.customcommands.platform.Platform;
 
@@ -43,6 +44,12 @@ public class CustomCommands {
 
     public CustomCommands cooldownHandler(CooldownHandler handler) {
         registry.getHandlerRegistry().setCooldownHandler(handler);
+        return this;
+    }
+
+    // TUTAJ JEST BRAKUJĄCA METODA:
+    public CustomCommands playerNotFoundHandler(PlayerNotFoundHandler handler) {
+        registry.getHandlerRegistry().setPlayerNotFoundHandler(handler);
         return this;
     }
 
