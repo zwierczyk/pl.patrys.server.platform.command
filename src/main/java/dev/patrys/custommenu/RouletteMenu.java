@@ -13,7 +13,7 @@ import java.util.Random;
 public abstract class RouletteMenu extends Menu {
 
     private final JavaPlugin plugin;
-    private final List<ItemStack> items;
+    private final List<ItemStack> prizes;
     private final int[] spinSlots;
     private final int centerSlotIndex;
     private final Random random;
@@ -24,18 +24,21 @@ public abstract class RouletteMenu extends Menu {
     private int delay;
     private int passed;
 
+    // Bezpieczna pamięć przedmiotów w ruletce
+    private ItemStack[] currentWheel;
+
     public RouletteMenu(JavaPlugin plugin, String title, int rows, int[] spinSlots, int centerSlotIndex) {
         super(title, rows);
         this.plugin = plugin;
         this.spinSlots = spinSlots;
         this.centerSlotIndex = centerSlotIndex;
-        this.items = new ArrayList<>();
+        this.prizes = new ArrayList<>();
         this.random = new Random();
         this.spinning = false;
     }
 
     public void addPrize(ItemStack itemStack) {
-        items.add(itemStack);
+        prizes.add(itemStack);
     }
 
     public abstract void onWin(Player player, ItemStack wonItem);
@@ -45,29 +48,62 @@ public abstract class RouletteMenu extends Menu {
     @Override
     public void onBuild(Player player) {
         onBuildBackground(player);
-        if (!spinning && items.size() > 0) {
-            fillWheelRandomly();
+        if (!spinning && !prizes.isEmpty()) {
+            currentWheel = new ItemStack[spinSlots.length];
+            for (int i = 0; i < spinSlots.length; i++) {
+                currentWheel[i] = prizes.get(random.nextInt(prizes.size()));
+                setItem(spinSlots[i], currentWheel[i]);
+            }
+        }
+    }
+
+    @Override
+    public void open(Player player) {
+        if (spinning) {
+            // Jeśli koło się kręci, a gracz wciśnie ESC,
+            // system tylko otwiera okno ponownie (bez resetowania przedmiotów!)
+            player.openInventory(getInventory());
+        } else {
+            super.open(player);
+        }
+    }
+
+    @Override
+    public void refresh() {
+        if (spinning) {
+            // Zablokuj całkowite czyszczenie menu podczas kręcenia
+            for (Player viewer : getViewers()) {
+                viewer.updateInventory();
+            }
+        } else {
+            super.refresh();
         }
     }
 
     public void start(Player player) {
-        if (spinning || items.isEmpty()) {
+        if (spinning || prizes.isEmpty()) {
             return;
         }
         spinning = true;
-        setReopenOnClose(true);
+        setReopenOnClose(true); // Wymuś otwarte okno
+
+        // Załaduj koło początkowe
+        currentWheel = new ItemStack[spinSlots.length];
+        for (int i = 0; i < spinSlots.length; i++) {
+            currentWheel[i] = prizes.get(random.nextInt(prizes.size()));
+            setItem(spinSlots[i], currentWheel[i]);
+        }
+
+        super.refresh(); // Przeładuj tło (np. by guzik START zniknął)
 
         ticks = 0;
         delay = 1;
         passed = 0;
 
-        refresh();
-
         taskId = Bukkit.getScheduler().runTaskTimer(plugin, () -> {
             if (passed >= delay) {
                 passed = 0;
-                shiftWheel(player);
-                ticks++;
+                shiftWheel();
                 player.playSound(player.getLocation(), Sound.BLOCK_NOTE_BLOCK_HAT, 1.0f, 1.5f);
 
                 if (ticks > 20 && ticks <= 30) delay = 2;
@@ -77,40 +113,37 @@ public abstract class RouletteMenu extends Menu {
                 else if (ticks > 48) {
                     finish(player);
                 }
+                ticks++;
             }
             passed++;
         }, 0L, 1L).getTaskId();
     }
 
-    private void shiftWheel(Player player) {
-        ItemStack[] current = new ItemStack[spinSlots.length];
+    private void shiftWheel() {
+        // Płynne przesuwanie w bezpiecznej tablicy
+        for (int i = currentWheel.length - 1; i > 0; i--) {
+            currentWheel[i] = currentWheel[i - 1];
+        }
+        currentWheel[0] = prizes.get(random.nextInt(prizes.size()));
+
+        // Przenoszenie bezpiecznej tablicy do GUI
         for (int i = 0; i < spinSlots.length; i++) {
-            current[i] = getInventory().getItem(spinSlots[i]);
-        }
-
-        for (int i = spinSlots.length - 1; i > 0; i--) {
-            setItem(spinSlots[i], current[i - 1]);
-        }
-
-        setItem(spinSlots[0], items.get(random.nextInt(items.size())));
-        player.updateInventory();
-    }
-
-    private void fillWheelRandomly() {
-        for (int slot : spinSlots) {
-            setItem(slot, items.get(random.nextInt(items.size())));
+            setItem(spinSlots[i], currentWheel[i]);
         }
     }
 
     private void finish(Player player) {
         Bukkit.getScheduler().cancelTask(taskId);
+
+        // Zawsze bierzemy item z bezpiecznej tablicy, a nie z widoku Bukkitowego
+        ItemStack won = currentWheel[centerSlotIndex].clone();
+
         spinning = false;
         setReopenOnClose(false);
 
-        ItemStack won = getInventory().getItem(spinSlots[centerSlotIndex]);
         player.playSound(player.getLocation(), Sound.UI_TOAST_CHALLENGE_COMPLETE, 1.0f, 1.0f);
 
-        refresh();
+        super.refresh(); // Przywracamy normalne zachowanie menu
         onWin(player, won);
     }
 
@@ -119,6 +152,7 @@ public abstract class RouletteMenu extends Menu {
         super.onClose(player);
         if (spinning && !shouldReopenOnClose()) {
             Bukkit.getScheduler().cancelTask(taskId);
+            spinning = false;
         }
     }
 
