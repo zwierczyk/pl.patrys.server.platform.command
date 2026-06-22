@@ -1,28 +1,17 @@
 package dev.patrys.custommenu;
 
+import org.bukkit.Material;
 import org.bukkit.entity.Player;
-
-import java.util.HashMap;
-import java.util.Map;
 
 public abstract class PaginatedMenu extends Menu {
 
     private int currentPage;
     private final int itemsPerPage;
-    private final Map<Integer, Integer> navigationSlots;
 
     public PaginatedMenu(String title, int rows) {
         super(title, rows);
         this.currentPage = 0;
         this.itemsPerPage = (rows - 2) * 7;
-        this.navigationSlots = new HashMap<>();
-        setupNavigation();
-    }
-
-    private void setupNavigation() {
-        int lastRow = (getSize() / 9) - 1;
-        navigationSlots.put(lastRow * 9 + 3, -1);
-        navigationSlots.put(lastRow * 9 + 5, 1);
     }
 
     public abstract int getTotalItems(Player player);
@@ -47,11 +36,12 @@ public abstract class PaginatedMenu extends Menu {
         onPageBuild(player, startIndex, endIndex);
 
         int lastRow = (getSize() / 9) - 1;
+
         if (currentPage > 0) {
             setItem(lastRow * 9 + 3, createPreviousPageItem()
                     .onClick((p, click) -> {
                         previousPage();
-                        open(p);
+                        refresh(); // Używamy refresh() zamiast open()
                     }));
         }
 
@@ -59,20 +49,22 @@ public abstract class PaginatedMenu extends Menu {
             setItem(lastRow * 9 + 5, createNextPageItem()
                     .onClick((p, click) -> {
                         nextPage();
-                        open(p);
+                        refresh(); // Używamy refresh() zamiast open()
                     }));
         }
     }
 
     protected MenuItem createPreviousPageItem() {
-        return MenuItem.of(ItemBuilder.of(org.bukkit.Material.ARROW)
-                .name("§aPrevious Page")
+        return MenuItem.of(ItemBuilder.of(Material.RED_DYE)
+                .name("§aPoprzednia strona")
+                .glow()
                 .build());
     }
 
     protected MenuItem createNextPageItem() {
-        return MenuItem.of(ItemBuilder.of(org.bukkit.Material.ARROW)
-                .name("§aNext Page")
+        return MenuItem.of(ItemBuilder.of(Material.LIME_DYE)
+                .name("§aNastępna strona")
+                .glow()
                 .build());
     }
 
