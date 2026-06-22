@@ -3,6 +3,7 @@ package dev.patrys.customcommands;
 import dev.patrys.customcommands.annotation.*;
 import dev.patrys.customcommands.argument.ArgumentResolver;
 import dev.patrys.customcommands.argument.ArgumentResolverRegistry;
+import dev.patrys.customcommands.brigadier.BrigadierInjector;
 import dev.patrys.customcommands.exception.InvalidUsageException;
 import dev.patrys.customcommands.exception.PlayerNotFoundException;
 import dev.patrys.customcommands.handler.HandlerRegistry;
@@ -18,6 +19,7 @@ public class CommandRegistry {
     private final Platform platform;
     private final ArgumentResolverRegistry resolverRegistry;
     private final HandlerRegistry handlerRegistry;
+    private final BrigadierInjector brigadierInjector;
     private final Map<String, List<CommandData>> commands = new HashMap<>();
     private final Map<String, Map<String, Long>> cooldowns = new ConcurrentHashMap<>();
 
@@ -25,6 +27,7 @@ public class CommandRegistry {
         this.platform = platform;
         this.resolverRegistry = new ArgumentResolverRegistry();
         this.handlerRegistry = new HandlerRegistry();
+        this.brigadierInjector = new BrigadierInjector();
     }
 
     public void register(Object commandInstance) {
@@ -49,9 +52,7 @@ public class CommandRegistry {
                         basePermission
                 );
 
-                String commandName = command.name();
-                commands.computeIfAbsent(commandName, k -> new ArrayList<>()).add(data);
-
+                commands.computeIfAbsent(command.name(), k -> new ArrayList<>()).add(data);
                 for (String alias : command.aliases()) {
                     commands.computeIfAbsent(alias, k -> new ArrayList<>()).add(data);
                 }
@@ -64,12 +65,21 @@ public class CommandRegistry {
                 (PlatformSender sender, String[] args) -> getSuggestions(sender, command.name(), args)
         );
 
+        if (brigadierInjector.isSupported()) {
+            List<CommandData> cmdData = commands.get(command.name());
+            brigadierInjector.registerCommand(command.name(), cmdData.toArray(new CommandData[0]));
+        }
+
         for (String alias : command.aliases()) {
             platform.registerCommand(
                     alias,
                     (PlatformSender sender, String[] args) -> executeCommand(sender, alias, args),
                     (PlatformSender sender, String[] args) -> getSuggestions(sender, alias, args)
             );
+            if (brigadierInjector.isSupported()) {
+                List<CommandData> aliasData = commands.get(alias);
+                brigadierInjector.registerCommand(alias, aliasData.toArray(new CommandData[0]));
+            }
         }
     }
 
@@ -146,6 +156,23 @@ public class CommandRegistry {
             return;
         }
 
+        boolean isPlayer = sender.getHandle() instanceof org.bukkit.entity.Player;
+
+        boolean requiresPlayer = matchedCommand.method.isAnnotationPresent(PlayerOnly.class) ||
+                matchedCommand.instance.getClass().isAnnotationPresent(PlayerOnly.class);
+        boolean requiresConsole = matchedCommand.method.isAnnotationPresent(ConsoleOnly.class) ||
+                matchedCommand.instance.getClass().isAnnotationPresent(ConsoleOnly.class);
+
+        if (requiresPlayer && !isPlayer) {
+            handlerRegistry.getPlayerOnlyHandler().handle(sender);
+            return;
+        }
+
+        if (requiresConsole && isPlayer) {
+            handlerRegistry.getConsoleOnlyHandler().handle(sender);
+            return;
+        }
+
         if (!checkPermissionAndNotify(sender, matchedCommand)) return;
         if (!checkCooldown(sender, matchedCommand)) return;
 
@@ -160,7 +187,6 @@ public class CommandRegistry {
             } catch (IllegalArgumentException e) {
                 sender.sendMessage(e.getMessage());
             } catch (Exception e) {
-                // Jeśli błąd pochodzi ze środka metody komendy
                 Throwable cause = e.getCause();
                 if (cause instanceof InvalidUsageException) {
                     sendUsage(sender, commandName, Collections.singletonList(matchedCommand));
@@ -190,7 +216,6 @@ public class CommandRegistry {
             int routeLen = cmd.route.isEmpty() ? 0 : cmd.route.split(" ").length;
 
             if (matchesRoute(cmd.route, args)) {
-                // Szukamy komendy z najdłuższą dopasowaną ścieżką
                 if (routeLen > bestRouteLength) {
                     bestMatch = cmd;
                     bestRouteLength = routeLen;
@@ -262,21 +287,23 @@ public class CommandRegistry {
         int routeLength = data.route.isEmpty() ? 0 : data.route.split(" ").length;
         int argIndex = routeLength;
 
-        // Zliczanie oczekiwanych argumentów i sprawdzanie adnotacji Join
         int expectedArgs = routeLength;
         boolean hasJoin = false;
         for (Parameter p : parameters) {
             if (p.isAnnotationPresent(Arg.class)) {
-                expectedArgs++;
+                if (p.getAnnotation(Arg.class).required() && p.getAnnotation(Arg.class).def().isEmpty()) {
+                    expectedArgs++;
+                }
                 if (p.isAnnotationPresent(Join.class)) {
                     hasJoin = true;
                 }
             }
         }
 
-        // Jeśli gracz wpisał za dużo argumentów, rzucamy błąd (chyba że jest Join)
         if (args.length > expectedArgs && !hasJoin) {
-            throw new InvalidUsageException();
+            int maxArgs = routeLength;
+            for (Parameter p : parameters) if (p.isAnnotationPresent(Arg.class)) maxArgs++;
+            if (args.length > maxArgs) throw new InvalidUsageException();
         }
 
         for (int i = 0; i < parameters.length; i++) {
@@ -297,26 +324,34 @@ public class CommandRegistry {
                 Arg arg = param.getAnnotation(Arg.class);
                 boolean isJoin = param.isAnnotationPresent(Join.class);
 
+                String argumentToResolve = null;
+
                 if (argIndex >= args.length) {
-                    if (arg.required()) {
+                    if (arg.required() && arg.def().isEmpty()) {
                         throw new InvalidUsageException();
                     }
-                    resolvedArgs[i] = null;
-                    continue;
+
+                    if (!arg.def().isEmpty()) {
+                        argumentToResolve = arg.def();
+                    } else {
+                        resolvedArgs[i] = null;
+                        continue;
+                    }
                 }
 
-                String argumentToResolve;
-                if (isJoin) {
-                    StringBuilder sb = new StringBuilder();
-                    for (int j = argIndex; j < args.length; j++) {
-                        if (j > argIndex) sb.append(" ");
-                        sb.append(args[j]);
+                if (argumentToResolve == null) {
+                    if (isJoin) {
+                        StringBuilder sb = new StringBuilder();
+                        for (int j = argIndex; j < args.length; j++) {
+                            if (j > argIndex) sb.append(" ");
+                            sb.append(args[j]);
+                        }
+                        argumentToResolve = sb.toString();
+                        argIndex = args.length;
+                    } else {
+                        argumentToResolve = args[argIndex];
+                        argIndex++;
                     }
-                    argumentToResolve = sb.toString();
-                    argIndex = args.length;
-                } else {
-                    argumentToResolve = args[argIndex];
-                    argIndex++;
                 }
 
                 ArgumentResolver<?> resolver = resolverRegistry.getResolver(type);
@@ -389,18 +424,23 @@ public class CommandRegistry {
         return handlerRegistry;
     }
 
-    private static class CommandData {
-        final Object instance;
-        final Method method;
-        final String route;
-        final String basePermission;
+    public static class CommandData {
+        private final Object instance;
+        private final Method method;
+        private final String route;
+        private final String basePermission;
 
-        CommandData(Object instance, Method method, String route, String basePermission) {
+        public CommandData(Object instance, Method method, String route, String basePermission) {
             this.instance = instance;
             this.method = method;
             this.route = route;
             this.basePermission = basePermission;
             method.setAccessible(true);
         }
+
+        public Object getInstance() { return instance; }
+        public Method getMethod() { return method; }
+        public String getRoute() { return route; }
+        public String getBasePermission() { return basePermission; }
     }
 }

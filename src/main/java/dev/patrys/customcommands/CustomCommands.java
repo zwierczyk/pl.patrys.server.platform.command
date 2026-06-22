@@ -53,6 +53,16 @@ public class CustomCommands {
         return this;
     }
 
+    public CustomCommands playerOnlyHandler(dev.patrys.customcommands.handler.PlayerOnlyHandler handler) {
+        registry.getHandlerRegistry().setPlayerOnlyHandler(handler);
+        return this;
+    }
+
+    public CustomCommands consoleOnlyHandler(dev.patrys.customcommands.handler.ConsoleOnlyHandler handler) {
+        registry.getHandlerRegistry().setConsoleOnlyHandler(handler);
+        return this;
+    }
+
     public Platform getPlatform() {
         return platform;
     }

@@ -6,9 +6,6 @@ import java.lang.annotation.RetentionPolicy;
 import java.lang.annotation.Target;
 
 @Retention(RetentionPolicy.RUNTIME)
-@Target(ElementType.PARAMETER)
-public @interface Arg {
-    String value();
-    boolean required() default true;
-    String def() default ""; // <-- NOWOŚĆ: Domyślna wartość!
+@Target({ElementType.TYPE, ElementType.METHOD})
+public @interface ConsoleOnly {
 }

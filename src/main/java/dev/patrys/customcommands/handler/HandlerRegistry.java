@@ -11,37 +11,30 @@ public class HandlerRegistry {
             sender.sendMessage("§cMusisz poczekać §7" + time + " §csekund!");
 
     private PlayerNotFoundHandler playerNotFoundHandler = (sender, name) ->
-            sender.sendMessage("§cGracz o nicku §7" + name + " §cnie został znaleziony (lub nigdy tu nie grał)!");
+            sender.sendMessage("§cGracz o nicku §7" + name + " §cnie został znaleziony!");
 
-    public PermissionHandler getPermissionHandler() {
-        return permissionHandler;
-    }
+    private PlayerOnlyHandler playerOnlyHandler = sender ->
+            sender.sendMessage("§cTa komenda może być użyta tylko przez gracza w grze!");
 
-    public void setPermissionHandler(PermissionHandler permissionHandler) {
-        this.permissionHandler = permissionHandler;
-    }
+    private ConsoleOnlyHandler consoleOnlyHandler = sender ->
+            sender.sendMessage("§cTa komenda może być użyta tylko z poziomu konsoli!");
 
-    public UsageHandler getUsageHandler() {
-        return usageHandler;
-    }
+    // GETTERY I SETTERY
+    public PermissionHandler getPermissionHandler() { return permissionHandler; }
+    public void setPermissionHandler(PermissionHandler permissionHandler) { this.permissionHandler = permissionHandler; }
 
-    public void setUsageHandler(UsageHandler usageHandler) {
-        this.usageHandler = usageHandler;
-    }
+    public UsageHandler getUsageHandler() { return usageHandler; }
+    public void setUsageHandler(UsageHandler usageHandler) { this.usageHandler = usageHandler; }
 
-    public CooldownHandler getCooldownHandler() {
-        return cooldownHandler;
-    }
+    public CooldownHandler getCooldownHandler() { return cooldownHandler; }
+    public void setCooldownHandler(CooldownHandler cooldownHandler) { this.cooldownHandler = cooldownHandler; }
 
-    public void setCooldownHandler(CooldownHandler cooldownHandler) {
-        this.cooldownHandler = cooldownHandler;
-    }
+    public PlayerNotFoundHandler getPlayerNotFoundHandler() { return playerNotFoundHandler; }
+    public void setPlayerNotFoundHandler(PlayerNotFoundHandler playerNotFoundHandler) { this.playerNotFoundHandler = playerNotFoundHandler; }
 
-    public PlayerNotFoundHandler getPlayerNotFoundHandler() {
-        return playerNotFoundHandler;
-    }
+    public PlayerOnlyHandler getPlayerOnlyHandler() { return playerOnlyHandler; }
+    public void setPlayerOnlyHandler(PlayerOnlyHandler playerOnlyHandler) { this.playerOnlyHandler = playerOnlyHandler; }
 
-    public void setPlayerNotFoundHandler(PlayerNotFoundHandler playerNotFoundHandler) {
-        this.playerNotFoundHandler = playerNotFoundHandler;
-    }
+    public ConsoleOnlyHandler getConsoleOnlyHandler() { return consoleOnlyHandler; }
+    public void setConsoleOnlyHandler(ConsoleOnlyHandler consoleOnlyHandler) { this.consoleOnlyHandler = consoleOnlyHandler; }
 }
